@@ -71,14 +71,14 @@ function removeWorldMapConfirm(water)
     end
 end
 
-function streamMapElements(resourceName, elementList)
+function streamMapElements(resourceName, elementList,offX,offY,offZ)
     local objects = {}
     for _, element in ipairs(elementList or {}) do
         if not (lodIDList[element.id] and highDefLODs) then
             local newElement = streamElement(
                 element.id,
                 element.type,
-                {tonumber(element.posX) or 0, tonumber(element.posY) or 0, tonumber(element.posZ) or 0},
+                {tonumber(element.posX) or 0 + offX, tonumber(element.posY) or 0 + offY, tonumber(element.posZ) or 0 + offZ},
                 {tonumber(element.rotX) or 0, tonumber(element.rotY) or 0, tonumber(element.rotZ) or 0},
                 element.interior,
                 element.dimension,
@@ -106,12 +106,26 @@ function onResourceStartTimer(resourceThatStarted)
     -- Load maps first
     local fh = fileOpen(zoneFilePath)
     local maps = fileToLines(fh)
+
+    -- check first line for #offset
+    local offsetX, offsetY, offsetZ = 0, 0, 0
+    if maps[1] and maps[1]:sub(1,7) == "#offset" then
+        local x,y,z = maps[1]:match("#offset%s+([^,]+),([^,]+),([^,]+)")
+        if x and y and z then
+            offsetX, offsetY, offsetZ = tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0
+        end
+        table.remove(maps, 1) -- remove the offset line so it’s not treated as a map name
+    end
+
     for _, map in ipairs(maps) do
         for _, v in ipairs(loadMap(resourceName, map) or {}) do
             table.insert(elementList, v)
-            if v.lodParent then lodIDList[v.lodParent] = true end
+            if v.lodParent then
+                lodIDList[v.lodParent] = true
+            end
         end
     end
+
 
     -- Then definitions
     local fh2 = fileOpen(zoneFilePath)
@@ -126,7 +140,7 @@ function onResourceStartTimer(resourceThatStarted)
 
     removeWorldMapConfirm(true)
     engineRestreamWorld()
-    streamMapElements(resourceName, elementList)
+    streamMapElements(resourceName, elementList,offsetX, offsetY, offsetZ)
 
     local lastDef = definitionList[#definitionList]
     if lastDef then
