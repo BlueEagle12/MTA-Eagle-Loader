@@ -26,6 +26,7 @@ modelCrashDebug      = false  -- Crash finder: spawn all objects at 0,0,0 for te
 modelCrashDebugRate  = 25     -- Time (ms) between spawn attempts in crash debug
 despawnDebug         = false  -- Remove object immediately after streaming in crash debug
 crashIndex           = 0      -- Current index for crash debugging
+forceObject          = false  -- Force all elements to be created as 'Objects' instead of buildings for easy debugging and map editing.
 
 -- ===========================
 --        LOD Attachments

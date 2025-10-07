@@ -156,7 +156,9 @@ function streamElement(id, type, pos, rot, interior, dimension, parentLOD, uniqu
     local xr, yr, zr = unpack(rot)
 
     local validBuilding = ((x > -3000) and (x < 3000) and (y > -3000) and (y < 3000))
-    local createFun = ((type == 'building') and validBuilding) and createBuilding or createObject
+    
+    local createFun = ((type == 'building') and validBuilding and (not forceObject)) and createBuilding or createObject
+
 
     local element = createFun(1337, x, y, z, xr, yr, zr)
     setElementInterior(element, tonumber(interior) or 0)
