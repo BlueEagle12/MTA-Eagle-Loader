@@ -74,20 +74,23 @@ function setElementStream(element, newModel, streamNew, initial, lodParent, uniq
         end
 
         -- LOD Parenting Logic
-        lodParent = lodParents[element] or lodParent
-        if highDefLODs and lodParent then
-            setupSelfLOD(element, getElementType(element))
-        else
-            if lodParent then
-                if string.lower(lodParent) == "self" then
-                    setupSelfLOD(element, getElementType(element))
-                else
-                    lodParents[element] = lodParent
-                    local parent = (itemIDListUnique[lodParent] or {})[uniqueID or 0] or (itemIDList[lodParent] or {})[1]
-                    if parent then
-                        setLowLODElement(element, parent)
-                        if lodAttach and lodAttach[lodParent] then
-                            attachElements(element, parent)
+
+        if (not disableLOD) then
+            lodParent = lodParents[element] or lodParent
+            if highDefLODs and lodParent then
+                setupSelfLOD(element, getElementType(element))
+            else
+                if lodParent then
+                    if string.lower(lodParent) == "self" then
+                        setupSelfLOD(element, getElementType(element))
+                    else
+                        lodParents[element] = lodParent
+                        local parent = (itemIDListUnique[lodParent] or {})[uniqueID or 0] or (itemIDList[lodParent] or {})[1]
+                        if parent then
+                            setLowLODElement(element, parent)
+                            if lodAttach and lodAttach[lodParent] then
+                                attachElements(element, parent)
+                            end
                         end
                     end
                 end
