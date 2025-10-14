@@ -178,7 +178,7 @@ function streamElement(id, type, pos, rot, interior, dimension, parentLOD, uniqu
 
     local createFun = isBuilding and createBuilding or createObject
 
-    local element = createFun(1337, x, y, z, xr, yr, zr,(isBuilding and interior or (parentLOD and true)))
+    local element = createFun(1337, x, y, z, xr, yr, zr,(isBuilding and (interior or 0) or (parentLOD and true)))
 
     setElementInterior(element, tonumber(interior) or 0)
 
