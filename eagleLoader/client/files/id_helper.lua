@@ -23,8 +23,8 @@ local function getLines(fh)
 end
 
 -- Load ID lists
-local idListFile = fileOpen("client/files/sa_id_list.ID")
-local fullIdListFile = fileOpen("client/files/sa_full_id_list.ID")
+local idListFile = fileOpen("client/files/sa_id_list.id")
+local fullIdListFile = fileOpen("client/files/sa_full_id_list.id")
 
 local idList = getLines(idListFile)
 local fullIdList = getLines(fullIdListFile)

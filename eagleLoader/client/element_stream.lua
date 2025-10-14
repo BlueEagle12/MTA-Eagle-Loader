@@ -120,20 +120,34 @@ function setupSelfLOD(element, type)
     local x, y, z    = getElementPosition(element)
     local xr, yr, zr = getElementRotation(element)
 
-    local createFun = (type == 'building') and createBuilding or createObject
-    local build = createFun(1337, x, y, z, xr, yr, zr)
+    -- match streamElement logic: only use createBuilding when:
+    -- type == 'building' AND within valid bounds AND NOT forceObject
+    local validBuilding = (x > -3000 and x < 3000 and y > -3000 and y < 3000)
+    local isBuilding = ((type == 'building') and validBuilding and (not forceObject))
+
+    local createFun = isBuilding and createBuilding or createObject
+
+    local build = createFun(1337, x, y, z, xr, yr, zr,isBuilding and (getElementInterior(element) or 0) or true)
+
+    -- keep LOD in same interior/dimension as the source element
+    setElementInterior(build, getElementInterior(element) or 0)
+    setElementDimension(build, getElementDimension(element) or 0)
+
     setElementModel(build, getElementModel(element))
     setLowLODElement(element, build)
     selfLODList[element] = build
     prepTime(build, getElementModel(element))
     setElementCollisionsEnabled(build, false)
+
+    return build
 end
+
 
 function setupProperties(element, property, setting)
     if property then
         local propertyFun =
             (property == "collisions_disabled" and setElementCollisionsEnabled) or
-            (assetType == "no_stream" and setElementStreamable) or
+            (property == "no_stream" and setElementStreamable) or
             setElementCollisionsEnabled
 
         propertyFun(element, setting)
@@ -160,10 +174,12 @@ function streamElement(id, type, pos, rot, interior, dimension, parentLOD, uniqu
 
     local validBuilding = ((x > -3000) and (x < 3000) and (y > -3000) and (y < 3000))
     
-    local createFun = ((type == 'building') and validBuilding and (not forceObject)) and createBuilding or createObject
+    local isBuilding = ((type == 'building') and validBuilding and (not forceObject))
 
+    local createFun = isBuilding and createBuilding or createObject
 
-    local element = createFun(1337, x, y, z, xr, yr, zr)
+    local element = createFun(1337, x, y, z, xr, yr, zr,(isBuilding and interior or (parentLOD and true)))
+
     setElementInterior(element, tonumber(interior) or 0)
 
     if not ignoreStream then
