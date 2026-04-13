@@ -51,8 +51,11 @@ end
 local function requestTextureID(assetName, img, path)
     if not textureIDs[assetName] then
         textureIDs[assetName] = engineRequestTXD(assetName)
-        engineImageLinkTXD(img, path, textureIDs[assetName])
     end
+    -- Always re-link to the current IMG: after a resource restart the old IMG
+    -- archive is removed and a new one is created, so the TXD-to-IMG association
+    -- must be re-established even if the TXD slot was already allocated.
+    engineImageLinkTXD(img, path, textureIDs[assetName])
     return textureIDs[assetName]
 end
 
