@@ -78,7 +78,7 @@ function streamMapElements(resourceName, elementList,offX,offY,offZ)
             local newElement = streamElement(
                 element.id,
                 element.type,
-                {tonumber(element.posX) or 0 + offX, tonumber(element.posY) or 0 + offY, tonumber(element.posZ) or 0 + offZ},
+                {(tonumber(element.posX) or 0) + offX, (tonumber(element.posY) or 0) + offY, (tonumber(element.posZ) or 0) + offZ},
                 {tonumber(element.rotX) or 0, tonumber(element.rotY) or 0, tonumber(element.rotZ) or 0},
                 element.interior,
                 element.dimension,
@@ -127,10 +127,10 @@ function onResourceStartTimer(resourceThatStarted)
     end
 
 
-    -- Then definitions
-    local fh2 = fileOpen(zoneFilePath)
-    local zones = fileToLines(fh2)
-    for _, zone in ipairs(zones) do
+    -- Then definitions. Reuse the already-parsed `maps` list (the zone names are
+    -- the same lines) so the stripped #offset header isn't reintroduced by a
+    -- second read of the file.
+    for _, zone in ipairs(maps) do
         for _, v in ipairs(loadZone(resourceName, zone) or {}) do
             if not (lodIDList[v.id] and highDefLODs) then
                 table.insert(definitionList, v)
@@ -140,7 +140,11 @@ function onResourceStartTimer(resourceThatStarted)
 
     removeWorldMapConfirm(true)
     engineRestreamWorld()
-    streamMapElements(resourceName, elementList,offsetX, offsetY, offsetZ)
+
+    -- Track the created elements so they can be destroyed when this map is
+    -- unloaded (otherwise they persist when switching maps).
+    mapElements[resourceName] = streamMapElements(resourceName, elementList, offsetX, offsetY, offsetZ)
+    resourceLoaded[resourceName] = true
 
     local lastDef = definitionList[#definitionList]
     if lastDef then

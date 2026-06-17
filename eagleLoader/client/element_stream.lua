@@ -147,6 +147,7 @@ function setupProperties(element, property, setting)
     if property then
         local propertyFun =
             (property == "collisions_disabled" and setElementCollisionsEnabled) or
+            (property == "disable_collisions" and setElementCollisionsEnabled) or
             (property == "no_stream" and setElementStreamable) or
             setElementCollisionsEnabled
 
@@ -158,7 +159,12 @@ end
 -- Element Creation
 -- =========================
 
-function streamElement(id, type, pos, rot, interior, dimension, parentLOD, uniqueID, ignoreStream)
+-- Buildings are only valid inside the SA world bounds; outside this range
+-- (and when forceObject is set) the element is created as a regular object.
+local WORLD_LIMIT = 3000
+
+function streamElement(id, elementType, pos, rot, interior, dimension, parentLOD, uniqueID, ignoreStream)
+    -- In crash-debug mode nothing is created here; IDs are just queued.
     if modelCrashDebug then
         addToSpawnList(id)
         return
@@ -171,23 +177,35 @@ function streamElement(id, type, pos, rot, interior, dimension, parentLOD, uniqu
 
     local x, y, z    = unpack(pos)
     local xr, yr, zr = unpack(rot)
+    interior  = tonumber(interior)  or 0
+    dimension = tonumber(dimension) or 0
 
-    local validBuilding = ((x > -3000) and (x < 3000) and (y > -3000) and (y < 3000))
-    
-    local isBuilding = ((type == 'building') and validBuilding and (not forceObject))
+    local inWorldBounds = (x > -WORLD_LIMIT and x < WORLD_LIMIT and y > -WORLD_LIMIT and y < WORLD_LIMIT)
+    local isBuilding    = (elementType == 'building') and inWorldBounds and not forceObject
 
-    local createFun = isBuilding and createBuilding or createObject
+    local element
+    if isBuilding then
+        element = createBuilding(1337, x, y, z, xr, yr, zr, interior)
+    else
+        -- createObject's final arg is isLowLOD: an element with a LOD parent
+        -- acts as its own low-detail stand-in.
+        element = createObject(1337, x, y, z, xr, yr, zr, parentLOD and true or false)
+    end
 
-    local element = createFun(1337, x, y, z, xr, yr, zr,(isBuilding and (interior or 0) or (parentLOD and true)))
+    if not element then
+        outputDebugString2(string.format("Error: Failed to create element for ID %s.", tostring(id)))
+        return
+    end
 
-    setElementInterior(element, tonumber(interior) or 0)
+    setElementInterior(element, interior)
+    setElementDimension(element, dimension)
 
     if not ignoreStream then
         setElementStream(element, id, true, nil, parentLOD, uniqueID)
     end
 
     if parentLOD then lodParents[element] = parentLOD end
-    if uniqueID then uniqueIDs[element] = uniqueID end
+    if uniqueID  then uniqueIDs[element]  = uniqueID  end
 
     setElementID(element, id)
 
@@ -202,10 +220,12 @@ function streamObject(id, x, y, z, xr, yr, zr, interior, dimension, parentLOD, u
 end
 
 function streamBuilding(id, x, y, z, xr, yr, zr, interior, parentLOD, uniqueID, ignoreStream)
+    -- Buildings have no dimension of their own, so pass nil for that slot to
+    -- keep parentLOD/uniqueID/ignoreStream aligned with streamElement.
     return streamElement(id, 'building',
         {tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0},
         {tonumber(xr) or 0, tonumber(yr) or 0, tonumber(zr) or 0},
-        interior, parentLOD, uniqueID, ignoreStream)
+        interior, nil, parentLOD, uniqueID, ignoreStream)
 end
 
 -- =========================
@@ -230,6 +250,43 @@ function onElementDestroy()
         if isElement(LOD) then
             destroyElement(LOD)
             outputDebugString2(string.format("LOD for %s with ID %s destroyed successfully.", elementType, elementID))
+        end
+
+        -- Destroy any self-generated LOD and clear per-element tracking so the
+        -- tables don't accumulate stale element keys over a long session.
+        if selfLODList[source] then
+            if isElement(selfLODList[source]) then
+                destroyElement(selfLODList[source])
+            end
+            selfLODList[source] = nil
+        end
+
+        lodParents[source] = nil
+        uniqueIDs[source]  = nil
+
+        -- Remove this element from the per-ID lookup lists.
+        local idList = itemIDList[elementID]
+        if idList then
+            for i = #idList, 1, -1 do
+                if idList[i] == source then
+                    table.remove(idList, i)
+                end
+            end
+            if #idList == 0 then
+                itemIDList[elementID] = nil
+            end
+        end
+
+        local uniqueList = itemIDListUnique[elementID]
+        if uniqueList then
+            for uid, elem in pairs(uniqueList) do
+                if elem == source then
+                    uniqueList[uid] = nil
+                end
+            end
+            if next(uniqueList) == nil then
+                itemIDListUnique[elementID] = nil
+            end
         end
     end
 end

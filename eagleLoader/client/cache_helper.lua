@@ -22,6 +22,10 @@ function requestModelID(modelID)
         idCache[modelID] = newID
         reverseID[newID] = modelID
         return newID, true
+    elseif tonumber(newID) then
+        -- Allocated an ID outside the usable range; free it so the slot
+        -- isn't leaked before we fall back to the SA pool.
+        engineFreeModel(newID)
     end
 
     -- Fallback: allocate from SA pool if configured

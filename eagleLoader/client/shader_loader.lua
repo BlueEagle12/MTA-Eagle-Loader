@@ -41,7 +41,7 @@ local function applyAlphaFix()
     end
 end
 
--- Optionally auto-apply on resource start
+
 if enableAlphaFix then
     addEventHandler("onClientResourceStart", resourceRoot, applyAlphaFix)
 end

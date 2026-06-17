@@ -56,3 +56,9 @@ function engineRequestSAModel()
     currentSAIndex = currentSAIndex + 1
     return model
 end
+
+-- Reset the SA model-ID pool so it can be reused. Safe to call only when no
+-- maps are currently loaded (otherwise IDs could be handed out twice).
+function resetSAModelPool()
+    currentSAIndex = 1
+end

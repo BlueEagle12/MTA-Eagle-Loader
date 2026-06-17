@@ -17,6 +17,11 @@ function setModelStreamTime(model, name, sIn, sOut)
     streamTimes[name] = {sIn, sOut}
 end
 
+-- Remove a stored streaming-time entry (called during map unload)
+function clearModelStreamTime(key)
+    if key ~= nil then streamTimes[key] = nil end
+end
+
 -- Returns true if the current time is between [start, end], wraps midnight
 local function isTimeBetween(startHour, startMin, endHour, endMin)
     local curHour, curMin = getTime()
@@ -36,6 +41,7 @@ setTimer(function()
     for obj in pairs(timeTable) do
         if not isElement(obj) then
             timeTable[obj] = nil
+            streamTimeObj[obj] = nil
         else
             local model = getElementModel(obj)
             local tData = streamTimes[model]

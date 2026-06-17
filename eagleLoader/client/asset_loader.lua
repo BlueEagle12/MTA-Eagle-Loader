@@ -16,11 +16,12 @@ uniqueIDs           = {}
 textureIDs          = {}
 definedProperties   = {}
 selfLODList         = {}
+mapElements         = {}   -- per-resource list of created world elements (for cleanup on unload)
 
 -- Optionally increase streaming memory on nightly builds
 if engineStreamingSetMemorySize then
-    engineStreamingSetMemorySize(streamingMemoryAllowcation * 1024 * 1024)
-    engineStreamingSetBufferSize(streamingBufferAllowcation * 1024 * 1024)
+    engineStreamingSetMemorySize(streamingMemoryAllocation * 1024 * 1024)
+    engineStreamingSetBufferSize(streamingBufferAllocation * 1024 * 1024)
 end
 
 -- =========================
@@ -28,6 +29,9 @@ end
 -- =========================
 
 local function collectValidIDs()
+    -- Rebuild from the elements that currently exist so the table doesn't
+    -- accumulate stale IDs from maps that have since been unloaded.
+    validID = {}
     for _, obj in ipairs(getElementsByType('object')) do
         validID[getElementID(obj)] = true
     end
@@ -133,7 +137,7 @@ function loadMapDefinitions(resourceName, mapDefinitions, last)
     startTickCount = getTickCount()
     collectValidIDs()
     prepIMGContainers(resourceName)
-    Async:setPriority("medium")
+    Async:setPriority("normal")
 
     Async:foreach(mapDefinitions, function(data)
         local modelID, isNew = requestModelID(data.id, true)
@@ -204,31 +208,60 @@ end
 function unloadMapDefinitions(name)
     if not name or not resource[name] then return end
 
-    -- Destroy associated elements
-    for i, v in pairs(reverseID) do
-        if resourceModels[name][i] then
-            idCache[v] = nil
-            reverseID[i] = nil
+    -- 1. Destroy the world elements (objects/buildings) created for this map.
+    --    This MUST happen before idCache is cleared below, so onElementDestroy
+    --    can still resolve each element and tear down its LOD + tracking-table
+    --    entries (lodParents, uniqueIDs, selfLODList, itemIDList, ...).
+    for _, el in ipairs(mapElements[name] or {}) do
+        if isElement(el) then destroyElement(el) end
+    end
+    mapElements[name] = nil
+
+    -- 2. Destroy water planes registered for this resource.
+    for _, el in ipairs(resource[name] or {}) do
+        if isElement(el) then destroyElement(el) end
+    end
+
+    -- 3. Clear id<->model mappings and the per-id / per-model metadata that
+    --    would otherwise grow every time a map is loaded.
+    for modelID, strID in pairs(reverseID) do
+        if resourceModels[name][modelID] then
+            idCache[strID]              = nil
+            reverseID[modelID]          = nil
+            definitionZones[modelID]    = nil
+            definitionZones[strID]      = nil
+            streamingDistances[modelID] = nil
+            definedProperties[strID]    = nil
+            timeIDs[strID]              = nil
+            if clearModelStreamTime then
+                clearModelStreamTime(modelID)
+                clearModelStreamTime(strID)
+            end
         end
     end
 
-    -- Free all models assigned to this resource
+    -- 4. Free all models assigned to this resource.
     if resourceModels[name] then
         for ID in pairs(resourceModels[name]) do
             engineFreeModel(ID)
         end
     end
 
-    resource[name] = nil
-    resourceModels[name] = nil
-
-    for i,v in pairs(globalCache[name] or {}) do
-        if isElement(v) then
-            destroyElement(v)
-        end
+    -- 5. Destroy cached asset handles (TXD/COL/DFF).
+    for _, v in pairs(globalCache[name] or {}) do
+        if isElement(v) then destroyElement(v) end
     end
-    
     globalCache[name] = nil
+
+    resource[name]        = nil
+    resourceModels[name]  = nil
+    resourceLoaded[name]  = nil
+
+    -- 6. If no maps remain loaded, the SA model-ID pool can be reused.
+    if resetSAModelPool and next(resource) == nil then
+        resetSAModelPool()
+    end
+
     outputDebugString2(string.format("Successfully unloaded map definitions for resource: %s", name))
 end
 
