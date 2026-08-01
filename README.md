@@ -1,61 +1,58 @@
-# Eagle Map Loader | MTA:SA
+# Eagle Map Loader for MTA:SA
 
-Eagle map loader is a resource for MTA:SA that allows for easy and nearly instant loading and proccessing of custom maps
+Eagle Loader is a map and asset streaming resource for Multi Theft Auto: San Andreas.
 
-## Supported Features
+- Current version: **4.0**
+- Requires: **MTA:SA 1.6.0-9.22485 or newer**
 
-#### Objects
+## Features
 
-- [X] Object placement
-- [X] Building placement
-- [X] Custom ID assignment
-- [x] LOD placement and assignment
-- [X] Zone based map support
-- [x] Compatability with default SA map
-- [x] Compatability with default SA interiors
-- [x] IMG support
+- Object and building placement
+- Custom model-ID assignment
+- Zone-based map loading
+- DFF, COL, TXD, and IMG support
+- LOD placement and linking
+- Day/night objects
+- GTA:SA map and interior compatibility
+- Static-building optimization
+- Dynamic and simulated physics objects
+- Per-placement physical properties
+- Stock-model overrides
+- Automatic resource cleanup
 
-#### Definitions
+## Installation
 
-- [X] Custom ID assignment
-- [X] Custom model loading
-- [X] Quick map loading
-- [X] Zone based map support
-- [X] Object Effects
-- [X] TObjs (Daytime / nighttime objects)
-- [X] Full flag support
-- [X] Custom flag support
-- [ ] Definition only resources (WIP)
+1. Download or clone this repository.
+2. Copy the `eagleLoader` folder into your server's `resources` directory.
+3. Start `eagleLoader` before starting map resources that use it.
 
-## Usage
+```text
+start eagleLoader
+start your_map_resource
+```
 
-1. [Download](https://github.com/BlueEagle12/MTA-SA---Eagle-Loader) 
-2. Place the folder 'eagleLoader' (or zip file if you download a release) in your resources folder.
-3. Start the resource
-4. Start maps that use the resource
+## Documentation
 
-## Map creation
+Configuration, map formats, physics attributes, IMG archives, exports, and troubleshooting are documented in the [project wiki](https://github.com/BlueEagle12/MTA-Eagle-Loader/wiki).
 
-See these two GITHUBs for map creation : 
+## Exports
 
-[Scripts for Blender](https://github.com/BlueEagle12/Eagle-Map-Proccessor---Blender-Scripts)
+Eagle Loader provides client and server exports for:
 
-[Map proccessor for generating maps](https://github.com/BlueEagle12/MTA-SA-Eagle-Map-Proccessor)
+- `loadMapDefinitions`
+- `unloadMapDefinitions`
+- `streamObject`
+- `streamBuilding`
+- `setElementStream`
+- `getMaps` (server)
 
+See the [wiki](https://github.com/BlueEagle12/MTA-Eagle-Loader/wiki) for signatures and examples.
 
-#### Resource Exports
+## Map creation tools
 
-* [X] - loadMapDefinitions - `loadMapDefinitions ( ResoueceName, Table with map definitions )`
-  - Used to load a map
-* [X] - unloadMapDefinitions - `unloadMapDefinitions( ResourceName )`
-  - Used to unload a map
-* [X] - setElementStream - `setElementStream ( element theElement, int streamID )`
-  - Used to set an object or building ID. Using setElementID() will do the same thing.
-* [X] - streamObject - `streamObject ( int streamID, float x, float y, float z, [ float rx, float ry, float rz )`
-  - Create an object using eagleLoader, same pararmeters as createObject
-* [X] - streamBuilding - `streamBuilding ( int streamID, float x, float y, float z [, float rx, float ry, float rz, int interior = 0 ] )`
-  - Create a building using eagleLoader, same pararmeters as createBuilding
+- [Eagle Blender scripts](https://github.com/BlueEagle12/Eagle-Map-Proccessor---Blender-Scripts)
+- [Eagle map processor](https://github.com/BlueEagle12/MTA-SA-Eagle-Map-Proccessor)
 
+## Community
 
 [Discord](https://discord.gg/q8ZTfGqRXj)
-
