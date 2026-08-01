@@ -1,6 +1,8 @@
 resourceLoaded = {}
-mapUnloaded = false
-lodIDList = {}
+lodIDsByResource = {}
+crashZoneMarkers = {}
+local defaultWorldRemovalApplied = false
+local defaultWaterLevelApplied = false
 
 -- Utility: Read all lines from a file handle, returns a table of lines
 local function fileToLines(fh)
@@ -16,6 +18,15 @@ local function fileToLines(fh)
     return result
 end
 
+local function parseOffsetDirective(line, directive)
+    local x, y, z = line:match("^" .. directive .. "%s+([^,]+),([^,]+),([^,]+)%s*$")
+    if not (x and y and z) then
+        return
+    end
+
+    return tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0
+end
+
 -- Load a zone .definition file (returns table of attribute tables)
 function loadZone(resourceName, zone)
     zone = zone:gsub("%s+", "")
@@ -29,6 +40,10 @@ function loadZone(resourceName, zone)
     local defs = {}
     for _, node in ipairs(xmlNodeGetChildren(xml)) do
         local attributes = xmlNodeGetAttributes(node)
+        -- The containing directory is the authoritative zone. Older generated
+        -- definition files (including Nice_Optimized) omit the zone attribute.
+        attributes.zone = attributes.zone or zone
+        attributes.definitionType = xmlNodeGetName(node)
         getFlags(attributes)
         table.insert(defs, attributes)
     end
@@ -36,7 +51,19 @@ function loadZone(resourceName, zone)
     return defs
 end
 
--- Load a zone .map file (returns table of attribute tables with .type field)
+local function getMapInfoOffset(attributes)
+    if not (attributes.offsetX or attributes.offsetY or attributes.offsetZ) then
+        return
+    end
+
+    return {
+        x = tonumber(attributes.offsetX) or 0,
+        y = tonumber(attributes.offsetY) or 0,
+        z = tonumber(attributes.offsetZ) or 0
+    }
+end
+
+-- Load a zone .map file (returns table of attribute tables with .type field and optional map info offset)
 function loadMap(resourceName, zone)
     zone = zone:gsub("%s+", "")
     local path = (":%s/zones/%s/%s.map"):format(resourceName, zone, zone)
@@ -44,21 +71,32 @@ function loadMap(resourceName, zone)
     local xml = xmlLoadFile(path)
     if not xml then return end
     local entries = {}
+    local mapOffset
     for _, node in ipairs(xmlNodeGetChildren(xml)) do
         local attributes = xmlNodeGetAttributes(node)
-        attributes.type = xmlNodeGetName(node)
-        table.insert(entries, attributes)
+        local nodeType = xmlNodeGetName(node)
+        if nodeType == "info" then
+            mapOffset = getMapInfoOffset(attributes) or mapOffset
+        else
+            attributes.type = nodeType
+            table.insert(entries, attributes)
+        end
     end
     xmlUnloadFile(xml)
-    return entries
+    return entries, mapOffset
 end
 
 -- Remove world map and/or interiors as needed
 function removeWorldMapConfirm(water)
     if removeDefaultMap then
-        if water then
+        if water and not defaultWaterLevelApplied then
             setWaterLevel(-10000000)
+            defaultWaterLevelApplied = true
         end
+        if defaultWorldRemovalApplied then
+            return
+        end
+
         if removeDefaultInteriors then
             removeGameWorld()
         else
@@ -68,29 +106,239 @@ function removeWorldMapConfirm(water)
             end
         end
         setOcclusionsEnabled(false)
+        defaultWorldRemovalApplied = true
     end
 end
 
-function streamMapElements(resourceName, elementList,offX,offY,offZ)
-    local objects = {}
-    for _, element in ipairs(elementList or {}) do
-        if not (lodIDList[element.id] and highDefLODs) then
-            local newElement = streamElement(
-                element.id,
-                element.type,
-                {tonumber(element.posX) or 0 + offX, tonumber(element.posY) or 0 + offY, tonumber(element.posZ) or 0 + offZ},
-                {tonumber(element.rotX) or 0, tonumber(element.rotY) or 0, tonumber(element.rotZ) or 0},
-                element.interior,
-                element.dimension,
-                element.lodParent,
-                element.uniqueID,
-                true
-            )
-            if newElement then
-                table.insert(objects, newElement)
+local function crashZoneAppliesToResource(zone, resourceName)
+    return not zone.resource or zone.resource == "" or zone.resource == resourceName
+end
+
+local function getCrashZoneForPosition(resourceName, x, y, z, skipOnly)
+    for _, zone in ipairs(crashZones or {}) do
+        if crashZoneAppliesToResource(zone, resourceName) and (not skipOnly or zone.skip) then
+            local dx, dy, dz = x - zone.x, y - zone.y, z - zone.z
+            if (dx * dx + dy * dy + dz * dz) <= (zone.radius * zone.radius) then
+                return zone
             end
         end
     end
+end
+
+local function createCrashZoneMarkers(resourceName)
+    if crashZoneMarkers[resourceName] then
+        return
+    end
+
+    crashZoneMarkers[resourceName] = {}
+
+    for _, zone in ipairs(crashZones or {}) do
+        if zone.blip and crashZoneAppliesToResource(zone, resourceName) then
+            local blip = createBlip(zone.x, zone.y, zone.z, 0, 3, 255, 0, 0, 255, 0, 99999)
+            local area = createRadarArea(
+                zone.x - zone.radius,
+                zone.y - zone.radius,
+                zone.radius * 2,
+                zone.radius * 2,
+                255,
+                0,
+                0,
+                80
+            )
+
+            if isElement(blip) then
+                table.insert(crashZoneMarkers[resourceName], blip)
+            end
+            if isElement(area) then
+                table.insert(crashZoneMarkers[resourceName], area)
+            end
+        end
+    end
+end
+
+local function destroyCrashZoneMarkers(resourceName)
+    for _, element in ipairs(crashZoneMarkers[resourceName] or {}) do
+        if isElement(element) then
+            destroyElement(element)
+        end
+    end
+
+    crashZoneMarkers[resourceName] = nil
+end
+
+local function isTrueAttribute(value)
+    if type(value) == "boolean" then return value end
+    if type(value) == "number" then return value ~= 0 end
+    if type(value) ~= "string" then return false end
+    value = value:lower()
+    return value == "true" or value == "1" or value == "yes" or value == "on"
+end
+
+local function resolvesToSAPhysicsModel(element, resourceName)
+    if not (element and element.id) then
+        return false
+    end
+
+    local requestedModel = getResourceModelID(resourceName, element.id)
+    if requestedModel then
+        -- Ordinary custom allocations stay eligible for promotion even when
+        -- their logical name matches a stock model. An explicit nativeModel is
+        -- different: it deliberately opts into that stock model's behavior.
+        local definition = resourceDefinitions[resourceName]
+            and resourceDefinitions[resourceName][element.id]
+        local nativeValue = definition and (
+            definition.nativeModel
+            or definition.nativeModelID
+            or definition.native_model
+            or definition.native_model_id
+        )
+        local nativeModel = nativeValue
+            and (defaultIDs[tostring(nativeValue):gsub("^%s*(.-)%s*$", "%1")]
+                or tonumber(nativeValue))
+        return nativeModel and isSAPhysicsObjectID(nativeModel) or false
+    end
+
+    local model = defaultIDs[element.id] or tonumber(element.id)
+    return model and isSAPhysicsObjectID(model) or false
+end
+
+local function canPromoteStaticObject(element, overrides, resourceName)
+    if not preferStaticBuildings or element.type ~= "object" then
+        return false
+    end
+    if (tonumber(element.dimension) or 0) ~= 0 then
+        return false
+    end
+    if isTrueAttribute(element.dynamic)
+        or isTrueAttribute(element.forceObject)
+        or isTrueAttribute(element.force_object)
+    then
+        return false
+    end
+    if lodAttach and (lodAttach[element.id] or lodAttach[element.lodParent]) then
+        return false
+    end
+
+    -- Keep physics-tagged stock GTA:SA models on the native object path. Their
+    -- object.dat behavior is lost if the static-building optimization recreates
+    -- them as buildings. Untagged stock scenery and custom definitions remain
+    -- eligible; custom definitions have an idCache entry even when they reuse
+    -- a stock logical name.
+    if resolvesToSAPhysicsModel(element, resourceName) then
+        return false
+    end
+
+    -- Preserve object-only behavior when a placement explicitly asks for it
+    -- or uses per-instance physics (buildings do not support object physics).
+    return not overrides or (
+        overrides.breakable == nil
+        and overrides.frozen == nil
+        and overrides.streamable == nil
+        and overrides.scale == nil
+        and overrides.simulated ~= true
+        and overrides.objectProperties == nil
+    )
+end
+
+local function ensureBuildingPoolCapacity(elementList, resourceName)
+    if not (engineGetPoolCapacity and engineSetPoolCapacity) then
+        return
+    end
+
+    local requested = 0
+    for _, element in ipairs(elementList or {}) do
+        if (tonumber(element.dimension) or 0) == 0
+            and (element.type == "building"
+            or (preferStaticBuildings
+                and element.type == "object"
+                and not isTrueAttribute(element.dynamic)
+                and not isTrueAttribute(element.forceObject)
+                and not isTrueAttribute(element.force_object)
+                and not resolvesToSAPhysicsModel(element, resourceName)))
+        then
+            requested = requested + 1
+        end
+    end
+
+    local okCapacity, currentCapacity = pcall(engineGetPoolCapacity, "building")
+    if not okCapacity or not tonumber(currentCapacity) then
+        return
+    end
+
+    local used = 0
+    if engineGetPoolUsedCapacity then
+        local okUsed, currentUsed = pcall(engineGetPoolUsedCapacity, "building")
+        if okUsed then used = tonumber(currentUsed) or 0 end
+    end
+
+    local target = used + requested + math.max(0, tonumber(buildingPoolHeadroom) or 0)
+    if target > currentCapacity then
+        local ok, result = pcall(engineSetPoolCapacity, "building", target)
+        if not ok or result == false then
+            outputDebugString2(string.format(
+                "Could not grow the building pool from %d to %d; static placements will fall back to objects.",
+                currentCapacity, target
+            ), 2)
+        else
+            outputDebugString2(string.format(
+                "Expanded the building pool from %d to %d for %d candidate placements.",
+                currentCapacity, target, requested
+            ))
+        end
+    end
+end
+
+function streamMapElements(resourceName, elementList,offX,offY,offZ, initializeImmediately)
+    local objects = {}
+    local skippedByCrashZone = {}
+    local resourceLODIDs = lodIDsByResource[resourceName] or {}
+
+    for _, element in ipairs(elementList or {}) do
+        if not (resourceLODIDs[element.id] and highDefLODs) then
+            local elementOffsetX = element.eagleOffsetX or offX
+            local elementOffsetY = element.eagleOffsetY or offY
+            local elementOffsetZ = element.eagleOffsetZ or offZ
+            local x = (tonumber(element.posX) or 0) + elementOffsetX
+            local y = (tonumber(element.posY) or 0) + elementOffsetY
+            local z = (tonumber(element.posZ) or 0) + elementOffsetZ
+            local crashZone = getCrashZoneForPosition(resourceName, x, y, z, true)
+
+            if crashZone then
+                skippedByCrashZone[crashZone.name] = (skippedByCrashZone[crashZone.name] or 0) + 1
+            else
+                local resourcePhysics = resourceDefinitionPhysicsOverrides[resourceName]
+                local overrides = mergePlacementOverrides(
+                    resourcePhysics and resourcePhysics[element.id],
+                    getPlacementOverrides(element)
+                )
+                local isLowLODElement = (element.type ~= "building") and resourceLODIDs[element.id] and not highDefLODs
+                local newElement = streamElement(
+                    element.id,
+                    element.type,
+                    {x, y, z},
+                    {tonumber(element.rotX) or 0, tonumber(element.rotY) or 0, tonumber(element.rotZ) or 0},
+                    element.interior,
+                    element.dimension,
+                    element.lodParent,
+                    element.uniqueID,
+                    not initializeImmediately,
+                    isLowLODElement,
+                    canPromoteStaticObject(element, overrides, resourceName),
+                    resourceName,
+                    element.type,
+                    overrides
+                )
+                if newElement then
+                    table.insert(objects, newElement)
+                end
+            end
+        end
+    end
+
+    for zoneName, count in pairs(skippedByCrashZone) do
+        outputDebugString2(string.format("Skipped %d elements in crash zone: %s", count, zoneName))
+    end
+
     return objects
 end
 
@@ -99,40 +347,77 @@ function onResourceStartTimer(resourceThatStarted)
     local resourceName = getResourceName(resourceThatStarted)
     local zoneFilePath = (":%s/eagleZones.txt"):format(resourceName)
     local waterFilePath = (":%s/water.dat"):format(resourceName)
+
+    -- A fast map restart can arrive while the previous instance is waiting for
+    -- its delayed native cleanup. Retry after that cleanup instead of mixing
+    -- the old model/IMG state with the new map load.
+    if unloadingResources and unloadingResources[resourceName] then
+        setTimer(onResourceStartTimer, (EAGLE_UNLOAD_DELAY_MS or 100) + 25, 1, resourceThatStarted)
+        return
+    end
+
     if not fileExists(zoneFilePath) or resourceLoaded[resourceName] then return end
 
+    mapLoadStartTicks[resourceName] = getTickCount()
     local elementList, definitionList = {}, {}
+    lodIDsByResource[resourceName] = {}
+    local resourceLODIDs = lodIDsByResource[resourceName]
+    createCrashZoneMarkers(resourceName)
 
     -- Load maps first
     local fh = fileOpen(zoneFilePath)
     local maps = fileToLines(fh)
 
-    -- check first line for #offset
+    -- Read optional map/water offsets before the zone names. Water has its own
+    -- directive because some converted maps need the geometry and exported
+    -- water adjusted independently.
     local offsetX, offsetY, offsetZ = 0, 0, 0
-    if maps[1] and maps[1]:sub(1,7) == "#offset" then
-        local x,y,z = maps[1]:match("#offset%s+([^,]+),([^,]+),([^,]+)")
-        if x and y and z then
-            offsetX, offsetY, offsetZ = tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0
+    local waterOffsetX, waterOffsetY, waterOffsetZ = 0, 0, 0
+    while maps[1] do
+        local directive = maps[1]
+        if directive:match("^#offset%s+") then
+            local x, y, z = parseOffsetDirective(directive, "#offset")
+            if x then
+                offsetX, offsetY, offsetZ = x, y, z
+            else
+                outputDebugString("Invalid eagleZones offset directive: " .. directive, 2)
+            end
+            table.remove(maps, 1)
+        elseif directive:match("^#waterOffset%s+") then
+            local x, y, z = parseOffsetDirective(directive, "#waterOffset")
+            if x then
+                waterOffsetX, waterOffsetY, waterOffsetZ = x, y, z
+            else
+                outputDebugString("Invalid eagleZones water offset directive: " .. directive, 2)
+            end
+            table.remove(maps, 1)
+        else
+            break
         end
-        table.remove(maps, 1) -- remove the offset line so it’s not treated as a map name
     end
 
     for _, map in ipairs(maps) do
-        for _, v in ipairs(loadMap(resourceName, map) or {}) do
+        local mapEntries, mapOffset = loadMap(resourceName, map)
+        for _, v in ipairs(mapEntries or {}) do
+            if mapOffset then
+                v.eagleOffsetX = mapOffset.x
+                v.eagleOffsetY = mapOffset.y
+                v.eagleOffsetZ = mapOffset.z
+            end
             table.insert(elementList, v)
             if v.lodParent then
-                lodIDList[v.lodParent] = true
+                resourceLODIDs[v.lodParent] = true
             end
         end
     end
 
 
-    -- Then definitions
-    local fh2 = fileOpen(zoneFilePath)
-    local zones = fileToLines(fh2)
-    for _, zone in ipairs(zones) do
+    -- Then definitions. Reuse the already-parsed `maps` list (the zone names are
+    -- the same lines) so the stripped #offset header isn't reintroduced by a
+    -- second read of the file.
+    for _, zone in ipairs(maps) do
         for _, v in ipairs(loadZone(resourceName, zone) or {}) do
-            if not (lodIDList[v.id] and highDefLODs) then
+            if not (resourceLODIDs[v.id] and highDefLODs) then
                 table.insert(definitionList, v)
             end
         end
@@ -140,14 +425,38 @@ function onResourceStartTimer(resourceThatStarted)
 
     removeWorldMapConfirm(true)
     engineRestreamWorld()
-    streamMapElements(resourceName, elementList,offsetX, offsetY, offsetZ)
+
+    resourceLoaded[resourceName] = true
 
     local lastDef = definitionList[#definitionList]
-    if lastDef then
-        loadMapDefinitions(resourceName, definitionList, lastDef.id)
-    end
+    loadMapDefinitions(resourceName, definitionList, lastDef and lastDef.id or true, function()
+        -- Definitions now exist, so create each placement directly with its
+        -- final model and initialize it in the same pass.
+        ensureBuildingPoolCapacity(elementList, resourceName)
+        mapElements[resourceName] = streamMapElements(
+            resourceName,
+            elementList,
+            offsetX,
+            offsetY,
+            offsetZ,
+            true
+        )
+        return true
+    end)
 
-    parseWaterDat(waterFilePath, resourceName)
+    parseWaterDat(
+        waterFilePath,
+        resourceName,
+        waterOffsetX,
+        waterOffsetY,
+        waterOffsetZ
+    )
 end
 
 addEventHandler("onClientResourceStart", root, onResourceStartTimer)
+
+addEventHandler("onClientResourceStop", root, function(stoppedResource)
+    local resourceName = getResourceName(stoppedResource)
+    destroyCrashZoneMarkers(resourceName)
+    lodIDsByResource[resourceName] = nil
+end)

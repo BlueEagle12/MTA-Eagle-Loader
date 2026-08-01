@@ -7,18 +7,18 @@ local Z_MIN = -1000
 local Z_MAX = 1000
 local waterDebug = false
 
-local shiftX, shiftY, shiftZ = 0, 0, 0
-
-
 -- ==============================
 -- Water Loader Core
 -- ==============================
 
-function clamp(val, min, max)
+local function clamp(val, min, max)
     return math.max(min, math.min(max, val))
 end
 
-function parseWaterDat(filePath,resourceName)
+function parseWaterDat(filePath, resourceName, offsetX, offsetY, offsetZ)
+    local shiftX = tonumber(offsetX) or 0
+    local shiftY = tonumber(offsetY) or 0
+    local shiftZ = tonumber(offsetZ) or 0
     local waterData = {}
     if fileExists(filePath) then
         local file = fileOpen(filePath)
@@ -30,7 +30,7 @@ function parseWaterDat(filePath,resourceName)
         local content = fileRead(file, fileGetSize(file))
         fileClose(file)
 
-        cLine = 0
+        local cLine = 0
 
         for line in string.gmatch(content, "[^\r\n]+") do
             cLine = cLine + 1
@@ -39,7 +39,10 @@ function parseWaterDat(filePath,resourceName)
                 table.insert(coords, tonumber(num))
             end
 
-            if #coords == 29 then
+            -- A 4-vertex water quad needs at least 29 numeric values
+            -- (4 corners * 7 values + 1 type flag). Some exports include
+            -- trailing values, so accept >= 29 rather than requiring exactly 29.
+            if #coords >= 29 then
                 local function getClamped(i)
                     local x = clamp(coords[i] + shiftX, WORLD_MIN, WORLD_MAX)
                     local y = clamp(coords[i+1] + shiftY, WORLD_MIN, WORLD_MAX)
@@ -73,11 +76,15 @@ end
 
 
 function createWater2(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4,name)
-    createWater(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4)
+    -- Return the created water element so createWaterPlanes can track it for
+    -- cleanup on unload; otherwise water planes leak across map switches.
+    local water = createWater(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4)
 
     if waterDebug then
         createRadarFromWaterZone(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4,name)
     end
+
+    return water
 end
 
 
@@ -88,8 +95,8 @@ function createWaterPlanes(waterData,resourceName)
                     w.x3, w.y3, w.z3,
                     w.x4, w.y4, w.z4,w.name)
         if water then
-            if resource[resourceName] then
-                table.insert(resource[resourceName], water)
+            if resourceElements[resourceName] then
+                table.insert(resourceElements[resourceName], water)
             end
         end 
     end
@@ -99,7 +106,7 @@ end
 -- Debug system
 -- ==============================
 
-radarAreas = {}
+local radarAreas = {}
 
 function createRadarFromWaterZone(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4,rName)
     -- Find min/max XY from all corners
@@ -116,7 +123,7 @@ function createRadarFromWaterZone(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4
 
     table.insert(radarAreas,{area = rArea,name = rName})
 
-    return area
+    return rArea
 end
 
 

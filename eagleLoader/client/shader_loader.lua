@@ -17,7 +17,9 @@ local function createAlphaFixShader()
     if enableAlphaFix2 then
         alphaFixShader = dxCreateShader(ALPHA_FIX_SHADER_PATH, 1, 0, false, "object,world")
     else
-        alphaFixShader = dxCreateShader(RAW_ALPHA_FIX_SHADER, 1, 0, true, "object,world")
+        -- The compatibility shader only needs to replace the original pass.
+        -- Layering it draws every matched foliage surface a second time.
+        alphaFixShader = dxCreateShader(RAW_ALPHA_FIX_SHADER, 1, 0, false, "object,world")
     end
     return alphaFixShader
 end
@@ -41,7 +43,7 @@ local function applyAlphaFix()
     end
 end
 
--- Optionally auto-apply on resource start
+
 if enableAlphaFix then
     addEventHandler("onClientResourceStart", resourceRoot, applyAlphaFix)
 end

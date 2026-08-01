@@ -1,9 +1,11 @@
 <meta>
-    <info type="script" name="eagleLoader" author="Blue Eagle" description="Eagle Map Loader" version="3.3" />
-    <min_mta_version client="1.6.0-9.22470" />
+    <info type="script" name="eagleLoader" author="Blue Eagle" description="Eagle Map Loader" version="4.0" />
+    <min_mta_version client="1.6.0-9.22485" />
 
     <!-- Config -->
-    <script type="client" src="config.lua" />
+    <config type="client" src="config.xml" />
+    <file src="*.log" nosync="true" />
+    <script type="client" src="config_loader.lua" />
 
     <!-- Server Scripts -->
     <script type="server" src="async.lua" />

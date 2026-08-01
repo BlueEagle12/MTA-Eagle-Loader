@@ -246,13 +246,14 @@ local class = loadClass();
 
 class "_Async" {
     
-    -- Constructor mehtod
+    -- Constructor method
     -- Starts timer to manage scheduler
     -- @access public
     -- @usage local asyncmanager = async();
     __init__ = function(self)
 
         self.threads = {};
+        self.threadErrorCallbacks = {};
         self.resting = 50; -- in ms (resting time)
         self.maxtime = 200; -- in ms (max thread iteration time)
         self.current = 0;  -- starting frame (resting)
@@ -261,7 +262,7 @@ class "_Async" {
         self.priority = {
             low = {500, 50},     -- better fps
             normal = {200, 200}, -- medium
-            high = {50, 500}     -- better perfomance
+            high = {50, 500}     -- better performance
         };
 
         self:setPriority("normal");
@@ -272,7 +273,7 @@ class "_Async" {
     -- @access private
     -- @param boolean [istimer] Identifies whether or not 
         -- switcher was called from main loop
-    switch = function(self, istimer)
+    switch = function(self, _isTimer)
         self.state = "running";
 
         if (self.current + 1  <= #self.threads) then
@@ -304,10 +305,33 @@ class "_Async" {
         local thread = self.threads[id];
 
         if (thread == nil or coroutine.status(thread) == "dead") then
+            if thread then self.threadErrorCallbacks[thread] = nil; end
             table.remove(self.threads, id);
             self:switch();
         else
-            coroutine.resume(thread);
+            local ok, err = coroutine.resume(thread);
+            if not ok then
+                local message = "Async coroutine failed: " .. tostring(err);
+                if outputDebugString then
+                    outputDebugString(message, 1);
+                else
+                    print(message);
+                end
+
+                local errorCallback = self.threadErrorCallbacks[thread];
+                self.threadErrorCallbacks[thread] = nil;
+                if errorCallback then
+                    local callbackOK, callbackError = pcall(errorCallback, err);
+                    if not callbackOK then
+                        local callbackMessage = "Async error callback failed: " .. tostring(callbackError);
+                        if outputDebugString then
+                            outputDebugString(callbackMessage, 1);
+                        else
+                            print(callbackMessage);
+                        end
+                    end
+                end
+            end
             self:switch();
         end
     end,
@@ -316,9 +340,12 @@ class "_Async" {
     -- Adding thread
     -- @access private
     -- @param function func Function to operate with
-    add = function(self, func)
+    add = function(self, func, errorCallback)
         local thread = coroutine.create(func);
         table.insert(self.threads, thread);
+        if errorCallback then
+            self.threadErrorCallbacks[thread] = errorCallback;
+        end
     end,
 
 
@@ -362,7 +389,7 @@ class "_Async" {
         -- @usage async:iterate(1, 10000, function(i)
         --     print(i);
         -- end);
-    iterate = function(self, from, to, func, callback)
+    iterate = function(self, from, to, func, callback, errorCallback)
         self:add(function()
             local a = getTickCount();
             local lastresume = getTickCount();
@@ -383,7 +410,7 @@ class "_Async" {
             if (callback) then
                 callback();
             end
-        end);
+        end, errorCallback);
 
         self:switch();
     end,
@@ -400,7 +427,7 @@ class "_Async" {
         -- @usage async:foreach(vehicles, function(vehicle, id)
         --     print(vehicle.title);
         -- end);
-    foreach = function(self, array, func, callback)
+    foreach = function(self, array, func, callback, errorCallback)
         self:add(function()
             local a = getTickCount();
             local lastresume = getTickCount();
@@ -421,7 +448,7 @@ class "_Async" {
             if (callback) then
                 callback();
             end
-        end);
+        end, errorCallback);
 
         self:switch();
     end,
