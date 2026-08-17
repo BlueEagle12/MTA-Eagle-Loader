@@ -75,6 +75,15 @@ local function requestAvailableSAModel(logicalID)
                 "Skipping out-of-range SA fallback model ID %s for logical ID %s",
                 tostring(candidate), tostring(logicalID)
             ), 2)
+        elseif isSAPhysicsObjectID(candidate) then
+            -- Arbitrary custom definitions must not inherit hard-coded GTA
+            -- behavior from dynamic stock models such as traffic lights,
+            -- breakable props, or physics objects. Those slots are only safe
+            -- when a definition explicitly opts into one via nativeModel.
+            outputDebugString2(string.format(
+                "Skipping physics-tagged SA fallback model ID %s for logical ID %s",
+                tostring(candidate), tostring(logicalID)
+            ))
         elseif isSkippedSAID(candidate) then
             outputDebugString2(string.format(
                 "Skipping reserved SA fallback model ID %s for logical ID %s",

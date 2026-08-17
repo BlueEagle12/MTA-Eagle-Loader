@@ -387,7 +387,7 @@ function registerMapDefinitions(resourceName, mapDefinitions)
     end
 end
 
-local function applyModelSettings(resourceName, data, modelID, mirrorModelIDProperties)
+local function applyModelSettings(resourceName, data, modelID, mirrorModelIDProperties, normalizeModelFlags)
     resourceDefinedProperties[resourceName] = resourceDefinedProperties[resourceName] or {}
     resourceDefinitionPhysicsOverrides[resourceName] = resourceDefinitionPhysicsOverrides[resourceName] or {}
     definedProperties[data.id] = definedProperties[data.id] or {}
@@ -414,7 +414,8 @@ local function applyModelSettings(resourceName, data, modelID, mirrorModelIDProp
     -- engineSetModelLODDistance still rejects extended custom IDs on affected
     -- clients. The model remains usable with its inherited/default distance.
     if modelID >= 0 and modelID <= 19999 then
-        local ok = pcall(engineSetModelLODDistance, modelID, finalDist, true)
+        local extendedLod = finalDist > 325
+        local ok = pcall(engineSetModelLODDistance, modelID, finalDist, extendedLod)
         if not ok then
             outputDebugString2(string.format(
                 "Could not set LOD distance for model %s; using the engine default.",
@@ -435,9 +436,16 @@ local function applyModelSettings(resourceName, data, modelID, mirrorModelIDProp
                 end
             end
         else
-            if isEnabledAttribute(data[v.name]) then
-                local ok = pcall(engineSetModelFlag, modelID, v.name, true)
-                if not ok then
+            local enabled = isEnabledAttribute(data[v.name])
+            -- A stock fallback slot keeps its original IDE flags after its DFF
+            -- is replaced. Normalize every supported flag for ordinary custom
+            -- definitions so fences, glass, vegetation, and other transparent
+            -- stock models cannot leak draw_last/additive/depth behavior into
+            -- an unrelated asset. Explicit nativeModel aliases and SA model
+            -- overrides intentionally retain unspecified native flags.
+            if normalizeModelFlags or enabled then
+                local ok, result = pcall(engineSetModelFlag, modelID, v.name, enabled)
+                if not ok or result == false then
                     outputDebugString2(string.format(
                         "Could not set model flag %s on model %s.",
                         tostring(v.name), tostring(modelID)
@@ -539,7 +547,13 @@ local function applyMapDefinition(resourceName, data)
         }
     end
 
-    applyModelSettings(resourceName, data, modelID)
+    applyModelSettings(
+        resourceName,
+        data,
+        modelID,
+        false,
+        definitionNativeModel(data) == nil
+    )
 
     local colName = optionalAssetName(data.col)
     local colLoaded = true

@@ -2,8 +2,8 @@
 
 **A map and asset streaming runtime for Multi Theft Auto: San Andreas.**
 
-[![Version](https://img.shields.io/badge/version-4.0-2563eb)](eagleLoader/meta.xml)
-[![MTA:SA](https://img.shields.io/badge/MTA%3ASA-1.6.0--9.22485%2B-f97316)](#requirements)
+[![Version](https://img.shields.io/badge/version-4.02-2563eb)](eagleLoader/meta.xml)
+[![MTA:SA](https://img.shields.io/badge/MTA%3ASA-1.6.0--9.22676%2B-f97316)](#requirements)
 [![Documentation](https://img.shields.io/badge/docs-Wiki-4b5563)](https://github.com/BlueEagle12/MTA-Eagle-Loader/wiki)
 
 Eagle Loader turns an MTA resource into a streamed custom world. It assigns
@@ -30,7 +30,7 @@ when a resource stops.
 
 ## Requirements
 
-- **MTA:SA client 1.6.0-9.22485 or newer**.
+- **MTA:SA client 1.6.0-9.22676 or newer**.
 - An MTA server capable of running the included `eagleLoader` resource.
 - Map resources following Eagle's zone, definition, and placement format.
 
