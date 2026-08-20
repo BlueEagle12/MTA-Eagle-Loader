@@ -17,6 +17,24 @@ local function toNum(v, default)
     return tonumber(v) or default
 end
 
+local function boundedAllocation(value, default, maximum, settingName)
+    if value == nil then return default end
+    value = tonumber(value)
+    if not value or value <= 0 then
+        outputDebugString(string.format(
+            "eagleLoader: invalid %s; using %d MB.", settingName, default
+        ), 2)
+        return default
+    end
+    if value > maximum then
+        outputDebugString(string.format(
+            "eagleLoader: %s exceeds %d MB; clamping it.", settingName, maximum
+        ), 2)
+        return maximum
+    end
+    return value
+end
+
 local function splitCSV(str)
     local t = {}
     if type(str) ~= "string" then return t end
@@ -117,9 +135,16 @@ local function loadConfig()
         highDefLODs               = toBool(attr(s, "highDefLODs"),             highDefLODs)
         preferStaticBuildings     = toBool(attr(s, "preferStaticBuildings"),   preferStaticBuildings)
         buildingPoolHeadroom      = toNum(attr(s, "buildingPoolHeadroom"),      buildingPoolHeadroom)
-        streamingMemoryAllocation = toNum(attr(s, "memoryAllocation"),         streamingMemoryAllocation)
-        streamingBufferAllocation = toNum(attr(s, "bufferAllocation"),         streamingBufferAllocation)
+        -- These are global native allocations. Enforce the documented Eagle
+        -- limits even when a malformed or legacy config supplies a bad value.
+        streamingMemoryAllocation = boundedAllocation(
+            attr(s, "memoryAllocation"), streamingMemoryAllocation, 1024, "memoryAllocation"
+        )
+        streamingBufferAllocation = boundedAllocation(
+            attr(s, "bufferAllocation"), streamingBufferAllocation, 512, "bufferAllocation"
+        )
         drawDistanceMultiplier    = toNum(attr(s, "drawDistanceMultiplier"),   drawDistanceMultiplier)
+        buildingPoolHeadroom = math.max(0, buildingPoolHeadroom)
     end
 
     -- Debug

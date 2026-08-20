@@ -15,6 +15,7 @@ lodParents          = {}
 uniqueIDs           = {}
 textureIDs          = {}
 textureLinkedImages = {}
+resourceTextureIDs  = {}   -- resource -> cache key -> requested TXD ID
 definedProperties   = {}
 mapElements         = {}   -- per-resource list of created world elements (for cleanup on unload)
 resourceDefinitions = {}
@@ -30,6 +31,7 @@ requestedTXDModels  = {}   -- resource -> model IDs assigned with engineSetModel
 nativeModelOwners   = {}   -- stock model ID -> owning resource/logical definition
 modelOverrideOwners = {}   -- stock override ID -> owning resource
 local restoreIMGModelLinks
+local unloadMapResource
 
 -- Element destruction reaches Lua immediately, but the GTA renderer can keep
 -- native streaming references until a later frame. Delay IMG/model teardown so
@@ -44,10 +46,25 @@ function eagleLoaderStopTrace(resourceName, phase)
     triggerServerEvent("eagleLoader:stopTrace", resourceRoot, resourceName, phase)
 end
 
--- Optionally increase streaming memory on nightly builds
+-- Preserve the client settings that were active before Eagle Loader changed
+-- them. These APIs affect the GTA streamer globally rather than just this
+-- resource, so leaving our larger values behind after a loader restart keeps
+-- the process at an unnecessarily high memory baseline.
+local previousStreamingMemorySize = engineStreamingGetMemorySize
+    and engineStreamingGetMemorySize()
+local previousStreamingBufferSize = engineStreamingGetBufferSize
+    and engineStreamingGetBufferSize()
+local configuredStreamingMemorySize = streamingMemoryAllocation * 1024 * 1024
+local configuredStreamingBufferSize = streamingBufferAllocation * 1024 * 1024
+
 if engineStreamingSetMemorySize then
-    engineStreamingSetMemorySize(streamingMemoryAllocation * 1024 * 1024)
-    engineStreamingSetBufferSize(streamingBufferAllocation * 1024 * 1024)
+    engineStreamingSetMemorySize(configuredStreamingMemorySize)
+end
+if engineStreamingSetBufferSize then
+    local bufferSet = engineStreamingSetBufferSize(configuredStreamingBufferSize)
+    if bufferSet == false then
+        outputDebugString("eagleLoader: unable to allocate the configured streaming buffer", 2)
+    end
 end
 
 -- =========================
@@ -76,14 +93,28 @@ end
 
 local function requestTextureID(assetName, img, path, resourceName)
     local cacheKey = tostring(resourceName) .. "\0" .. tostring(assetName)
+    local requestedNew = false
     if not textureIDs[cacheKey] then
         textureIDs[cacheKey] = engineRequestTXD(assetName)
+        requestedNew = textureIDs[cacheKey] and true or false
     end
     if not textureIDs[cacheKey] then
         return false
     end
+    resourceTextureIDs[resourceName] = resourceTextureIDs[resourceName] or {}
+    resourceTextureIDs[resourceName][cacheKey] = textureIDs[cacheKey]
     if textureLinkedImages[cacheKey] ~= img then
         if not engineImageLinkTXD(img, path, textureIDs[cacheKey]) then
+            -- A failed first link has no model users. Return the new pool slot
+            -- immediately instead of retaining it until the map eventually
+            -- unloads. Existing slots are kept so a map restart can relink them.
+            if requestedNew and engineFreeTXD then
+                local ok, freed = pcall(engineFreeTXD, textureIDs[cacheKey])
+                if ok and freed ~= false then
+                    textureIDs[cacheKey] = nil
+                    resourceTextureIDs[resourceName][cacheKey] = nil
+                end
+            end
             return false
         end
         textureLinkedImages[cacheKey] = img
@@ -141,12 +172,21 @@ local function loadImgAsset(assetType, assetName, resourceName, modelID, img, as
             return false
         end
     elseif assetType == "col" then
-        local asset = engineImageGetFile(img, assetPath)
-        local col = asset and engineLoadCOL(asset)
+        globalCache[resourceName] = globalCache[resourceName] or {}
+        local cacheKey = "img-col:" .. tostring(assetPath)
+        local col = globalCache[resourceName][cacheKey]
+        local created = false
+        if not isElement(col) then
+            local asset = engineImageGetFile(img, assetPath)
+            col = asset and engineLoadCOL(asset)
+            created = isElement(col)
+        end
         if not col or not engineReplaceCOL(col, modelID) then
+            if created and isElement(col) then destroyElement(col) end
             outputDebugString2(string.format("COL: %s could not be loaded or replaced from IMG! : %s", assetPath, tostring(modelID)), 2)
             return false
         end
+        if created then globalCache[resourceName][cacheKey] = col end
     elseif assetType == "dff" then
         if engineImageLinkDFF(img, assetPath, modelID) then
             imgLinkedDFFModels[resourceName] = imgLinkedDFFModels[resourceName] or {}
@@ -154,12 +194,24 @@ local function loadImgAsset(assetType, assetName, resourceName, modelID, img, as
             return true
         end
 
-        local asset = engineImageGetFile(img, assetPath)
-        local dff = asset and engineLoadDFF(asset)
+        globalCache[resourceName] = globalCache[resourceName] or {}
+        -- A loaded DFF's native model data is consumed by one replacement.
+        -- Keep a distinct handle for each destination model while still
+        -- retaining it in the resource cache for ordered unload cleanup.
+        local cacheKey = "img-dff:" .. tostring(assetPath) .. "\0" .. tostring(modelID)
+        local dff = globalCache[resourceName][cacheKey]
+        local created = false
+        if not isElement(dff) then
+            local asset = engineImageGetFile(img, assetPath)
+            dff = asset and engineLoadDFF(asset)
+            created = isElement(dff)
+        end
         if not dff or not engineReplaceModel(dff, modelID, false) then
+            if created and isElement(dff) then destroyElement(dff) end
             outputDebugString2(string.format("DFF: %s could not be linked or replaced from IMG! : %s", assetPath, tostring(modelID)), 2)
             return false
         end
+        if created then globalCache[resourceName][cacheKey] = dff end
     end
     return true
 end
@@ -680,7 +732,10 @@ function loadMapDefinitions(resourceName, mapDefinitions, last, onDefinitionsRea
             tostring(resourceName), tostring(err)
         ), 1)
         if resourceLoaded then resourceLoaded[resourceName] = nil end
-        unloadMapDefinitions(resourceName)
+        unloadMapResource(resourceName)
+    end, function()
+        return mapLoadGenerations[resourceName] ~= loadGeneration
+            or not resourceElements[resourceName]
     end)
 end
 
@@ -741,24 +796,43 @@ restoreIMGModelLinks = function(resourceName, modelID)
     end
 end
 
-local function freeRequestedTXDs()
-    if not engineFreeTXD then return end
+local function freeRequestedTXDs(resourceName)
+    local ownedTextureIDs = resourceName and resourceTextureIDs[resourceName] or textureIDs
+    if not ownedTextureIDs then return end
 
     local freed = {}
-    for _, txdID in pairs(textureIDs or {}) do
-        if txdID and not freed[txdID] then
+    local allReleased = true
+    for cacheKey, txdID in pairs(ownedTextureIDs) do
+        local released = txdID and freed[txdID] or nil
+        if txdID and released == nil then
             -- This client build expects the requested TXD ID (0-4999), not a
             -- model ID, despite older documentation naming the argument
             -- modelID. Passing Monaco's model 5091 aborted the whole unload.
             if engineRestoreTXDImage then
                 safeNativeCleanup("restore TXD IMG " .. tostring(txdID), engineRestoreTXDImage, txdID)
             end
-            safeNativeCleanup("free TXD " .. tostring(txdID), engineFreeTXD, txdID)
-            freed[txdID] = true
+            released = engineFreeTXD
+                and safeNativeCleanup("free TXD " .. tostring(txdID), engineFreeTXD, txdID) ~= false
+                or false
+            freed[txdID] = released
+        end
+        textureLinkedImages[cacheKey] = nil
+        if released then
+            textureIDs[cacheKey] = nil
+            ownedTextureIDs[cacheKey] = nil
+        else
+            allReleased = false
         end
     end
-    textureIDs = {}
-    textureLinkedImages = {}
+    if resourceName then
+        if allReleased then resourceTextureIDs[resourceName] = nil end
+    else
+        if allReleased then
+            textureIDs = {}
+            textureLinkedImages = {}
+            resourceTextureIDs = {}
+        end
+    end
 end
 
 function unloadMapDefinitions(name, onComplete)
@@ -832,7 +906,6 @@ function unloadMapDefinitions(name, onComplete)
                 definitionZones[strID]      = nil
                 streamingDistances[modelID] = nil
                 definitionPhysicsOverrides[modelID] = nil
-                textureLinkedImages[strID]  = nil
                 timeIDs[strID]              = nil
                 if clearModelStreamTime then
                     clearModelStreamTime(modelID)
@@ -910,7 +983,6 @@ function unloadMapDefinitions(name, onComplete)
             definedProperties[strID] = nil
             definitionPhysicsOverrides[ID] = nil
             definitionPhysicsOverrides[strID] = nil
-            textureLinkedImages[strID] = nil
             timeIDs[strID] = nil
             if clearModelStreamTime then
                 clearModelStreamTime(ID)
@@ -952,35 +1024,24 @@ function unloadMapDefinitions(name, onComplete)
     return true
 end
 
-local function unloadMapResource(name)
+unloadMapResource = function(name)
     unloadMapDefinitions(name, function()
         if unloadResourceIMGs then
             unloadResourceIMGs(name)
         end
 
         -- engineRemoveImage restores IMG streaming records and restreams the
-        -- world. MTA's native IMG cleanup specifically warns against doing
-        -- that after TXD pool slots have been freed, because pending channels
-        -- can still reference those slots. Therefore IMG removal happens
-        -- before the final engineFreeTXD. The stock SA world intentionally
-        -- remains removed; callers can explicitly use restoreSAWorld().
-        if next(resourceElements) == nil then
-            -- Keep a restarting map out of this final native cleanup window.
-            -- onResourceStartTimer retries while this flag is set.
-            unloadingResources[name] = true
-            eagleLoaderStopTrace(name, "txd-release-delayed")
-            setTimer(function()
-                -- A different map may have started while this map's IMG was
-                -- de-streaming. Requested TXDs are shared global state, so
-                -- defer their release until the next final-map unload instead
-                -- of freeing slots that the new map could now be using.
-                if next(resourceElements) == nil then
-                    eagleLoaderStopTrace(name, "txd-release-begin")
-                    freeRequestedTXDs()
-                end
-                unloadingResources[name] = nil
-            end, EAGLE_TXD_RELEASE_DELAY_MS, 1)
-        end
+        -- world. Keep this map's requested TXD slots alive for one additional
+        -- streaming interval, then release only the slots owned by this map.
+        -- Other maps use distinct requested TXD IDs and no longer prevent a
+        -- stopped map from returning its native texture memory to the pool.
+        unloadingResources[name] = true
+        eagleLoaderStopTrace(name, "txd-release-delayed")
+        setTimer(function()
+            eagleLoaderStopTrace(name, "txd-release-begin")
+            freeRequestedTXDs(name)
+            unloadingResources[name] = nil
+        end, EAGLE_TXD_RELEASE_DELAY_MS, 1)
     end)
 end
 
@@ -1000,7 +1061,17 @@ addEventHandler("onClientResourceStop", getRootElement(),
             -- before the client resource has already begun stopping. Normal map
             -- unload owns all explicit model/TXD/IMG cleanup while this resource
             -- is still running; MTA owns final resource/session destruction.
-            outputDebugString("eagleLoader: lightweight resource shutdown", 3)
+            local ownsMemorySetting = not engineStreamingGetMemorySize
+                or engineStreamingGetMemorySize() == configuredStreamingMemorySize
+            local ownsBufferSetting = not engineStreamingGetBufferSize
+                or engineStreamingGetBufferSize() == configuredStreamingBufferSize
+            if ownsMemorySetting and previousStreamingMemorySize and engineStreamingSetMemorySize then
+                pcall(engineStreamingSetMemorySize, previousStreamingMemorySize)
+            end
+            if ownsBufferSetting and previousStreamingBufferSize and engineStreamingSetBufferSize then
+                pcall(engineStreamingSetBufferSize, previousStreamingBufferSize)
+            end
+            outputDebugString("eagleLoader: lightweight resource shutdown; streaming limit restoration checked", 3)
             return
         end
 

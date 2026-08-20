@@ -427,11 +427,14 @@ class "_Async" {
         -- @usage async:foreach(vehicles, function(vehicle, id)
         --     print(vehicle.title);
         -- end);
-    foreach = function(self, array, func, callback, errorCallback)
+    foreach = function(self, array, func, callback, errorCallback, shouldCancel)
         self:add(function()
             local a = getTickCount();
             local lastresume = getTickCount();
             for k,v in ipairs(array) do
+                if shouldCancel and shouldCancel() then
+                    return;
+                end
                 func(v,k);
 
                 -- int getTickCount() 
