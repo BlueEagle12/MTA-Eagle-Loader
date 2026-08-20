@@ -1,5 +1,5 @@
 <meta>
-    <info type="script" name="eagleLoader" author="Blue Eagle" description="Eagle Map Loader" version="4.02" />
+    <info type="script" name="eagleLoader" author="Blue Eagle" description="Eagle Map Loader" version="4.02.1" />
     <!-- engineSetModelLODDistance's extendedLod argument requires r22676. -->
     <min_mta_version client="1.6.0-9.22676" />
 

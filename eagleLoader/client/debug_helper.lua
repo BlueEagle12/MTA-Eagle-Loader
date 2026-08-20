@@ -209,15 +209,26 @@ end
 -- Debug File Handling
 -- =========================
 
+local DEBUG_LINE_LIMIT = 1000
 local debugLines = {}
+local debugLineStart = 1
+local debugLineCount = 0
 
 function outputDebugString2(str, level)
     outputDebugString(str, level)
-    table.insert(debugLines, str)
+    str = tostring(str)
+    if debugLineCount < DEBUG_LINE_LIMIT then
+        local index = ((debugLineStart + debugLineCount - 1) % DEBUG_LINE_LIMIT) + 1
+        debugLines[index] = str
+        debugLineCount = debugLineCount + 1
+    else
+        debugLines[debugLineStart] = str
+        debugLineStart = (debugLineStart % DEBUG_LINE_LIMIT) + 1
+    end
 end
 
 function writeDebugFile()
-    if not debugLines or #debugLines == 0 then
+    if debugLineCount == 0 then
         outputDebugString("No debug lines to write.", 3)
         return false
     end
@@ -228,7 +239,9 @@ function writeDebugFile()
         return false
     end
 
-    for _, entry in ipairs(debugLines) do
+    for offset = 0, debugLineCount - 1 do
+        local index = ((debugLineStart + offset - 1) % DEBUG_LINE_LIMIT) + 1
+        local entry = debugLines[index]
         fileWrite(f, entry .. "\n")
     end
 
@@ -236,3 +249,59 @@ function writeDebugFile()
     outputDebugString("Wrote debug to: debug.txt")
     return true
 end
+
+local function countEntries(value)
+    local count = 0
+    for _ in pairs(value or {}) do count = count + 1 end
+    return count
+end
+
+local function countNestedEntries(value)
+    local count = 0
+    for _, nested in pairs(value or {}) do
+        count = count + countEntries(nested)
+    end
+    return count
+end
+
+-- On-demand diagnostics keep normal gameplay free of polling timers while
+-- making streamer usage and retained Eagle state visible during profiling.
+addCommandHandler("eaglemem", function()
+    local usedBytes = engineStreamingGetUsedMemory and engineStreamingGetUsedMemory() or 0
+    local limitBytes = engineStreamingGetMemorySize and engineStreamingGetMemorySize() or 0
+    local bufferBytes = engineStreamingGetBufferSize and engineStreamingGetBufferSize() or 0
+    local luaKilobytes = collectgarbage("count")
+    local poolUsed, poolCapacity = 0, 0
+    if engineGetPoolUsedCapacity then
+        local ok, value = pcall(engineGetPoolUsedCapacity, "building")
+        if ok then poolUsed = tonumber(value) or 0 end
+    end
+    if engineGetPoolCapacity then
+        local ok, value = pcall(engineGetPoolCapacity, "building")
+        if ok then poolCapacity = tonumber(value) or 0 end
+    end
+
+    outputChatBox(string.format(
+        "[Eagle Memory] streamer %.1f/%.1f MB | buffer %.1f MB | Lua %.1f MB",
+        usedBytes / 1048576,
+        limitBytes / 1048576,
+        bufferBytes / 1048576,
+        luaKilobytes / 1024
+    ))
+    outputChatBox(string.format(
+        "[Eagle Memory] maps %d | TXDs %d | asset handles %d | placements %d",
+        countEntries(resourceElements),
+        countEntries(textureIDs),
+        countNestedEntries(globalCache),
+        countNestedEntries(mapElements)
+    ))
+    outputChatBox(string.format(
+        "[Eagle Memory] IMG entries %d | async jobs %d | building pool %d/%d | debug %d/%d",
+        countNestedEntries(imageFiles),
+        Async and Async.instance and #Async.instance.threads or 0,
+        poolUsed,
+        poolCapacity,
+        debugLineCount,
+        DEBUG_LINE_LIMIT
+    ))
+end)

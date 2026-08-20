@@ -2,7 +2,7 @@
 
 **A map and asset streaming runtime for Multi Theft Auto: San Andreas.**
 
-[![Version](https://img.shields.io/badge/version-4.02-2563eb)](eagleLoader/meta.xml)
+[![Version](https://img.shields.io/badge/version-4.02.1-2563eb)](eagleLoader/meta.xml)
 [![MTA:SA](https://img.shields.io/badge/MTA%3ASA-1.6.0--9.22676%2B-f97316)](#requirements)
 [![Documentation](https://img.shields.io/badge/docs-Wiki-4b5563)](https://github.com/BlueEagle12/MTA-Eagle-Loader/wiki)
 
@@ -205,6 +205,10 @@ contains detailed guides for:
   definition and resource owner.
 - **LOD behavior looks wrong:** temporarily set `disableLOD="true"` in
   `config.xml` to isolate the relationship.
+- **Client memory looks high:** run `/eaglemem` before loading a map, after it
+  finishes loading, and about 250 ms after stopping it. The command reports
+  GTA streamer usage and limit, the separately allocated streaming buffer,
+  Lua memory, requested TXDs, cached asset handles, and live placements.
 - **A model crashes the client:** use the built-in model crash finder and review
   the final attempted model in its log.
 

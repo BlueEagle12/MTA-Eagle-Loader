@@ -29,8 +29,8 @@
         highDefLODs="false"
         preferStaticBuildings="true"
         buildingPoolHeadroom="2048"
-        memoryAllocation="1024"
-        bufferAllocation="512"
+        memoryAllocation="512"
+        bufferAllocation="150"
         drawDistanceMultiplier="1" />
 
     <!-- Debug
